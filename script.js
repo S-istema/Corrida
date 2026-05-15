@@ -1,1182 +1,795 @@
-// ============================================
-// RACETRACKER PRO - JAVASCRIPT COM SISTEMA DE VOZ
-// ============================================
+// ==============================================
+// RACETRACKER PRO v2 - OTIMIZADO E CORRIGIDO
+// ==============================================
 
-// ============ CONFIGURAÇÃO JSONBIN ============
-const CONFIG = {
-    BIN_ID: "6a068283250b1311c3512d3a",       
-    MASTER_KEY: "$2a$10$zfLo4xQ0.IvfaaQaJbTDle3OU9eW24NU.iN7JbK9Ph9OpF0MiuRRu", 
-    API_URL: "https://api.jsonbin.io/v3/b/",
-    UPDATE_INTERVAL: 2000,
-    GPS_INTERVAL: 1500,
+const CFG = {
+    BIN_ID: "6a068283250b1311c3512d3a",
+    MASTER_KEY: "$2a$10$zfLo4xQ0.IvfaaQaJbTDle3OU9eW24NU.iN7JbK9Ph9OpF0MiuRRu",
+    API: "https://api.jsonbin.io/v3/b/",
+    POLL: 2500,
+    GPS_MIN: 0.001,
 };
 
-// ============ ESTADO GLOBAL ============
-let state = {
-    role: null,
-    roomCode: null,
-    runnerId: null,
-    runnerName: null,
-    raceData: null,
-    watchId: null,
-    updateTimer: null,
-    timerInterval: null,
-    raceStartTime: null,
-    pausedTime: 0,
-    lastPosition: null,
-    totalDistance: 0,
-    positions: [],
-    adminMap: null,
-    runnerMap: null,
-    routeMap: null,
-    routePoints: [],
-    markers: {},
-    routeLine: null,
-    runnerTrail: null,
-    // Voice system
-    micActive: false,
-    pttActive: false,
-    continuousMode: false,
-    mediaRecorder: null,
-    audioStream: null,
-    audioContext: null,
-    analyser: null,
-    isRecording: false,
-    audioChunks: [],
-    lastMessageId: null,
-    lastAudioId: null,
-    visualizerAnimFrame: null,
+// ======= ESTADO =======
+const S = {
+    role: null, room: null, rid: null, rname: null,
+    data: null, gpsId: null, pollId: null, tickId: null,
+    t0: null, paused: 0,
+    lastPos: null, dist: 0, trail: [],
+    maps: {}, markers: {}, lines: {},
+    routePts: [],
+    // voice
+    mic: false, ptt: false, cont: false,
+    recorder: null, stream: null, actx: null, analyser: null,
+    recording: false, chunks: [], contInt: null, vizRaf: null,
+    lastMsg: null, lastAud: null,
+    busy: false,
 };
 
-const RUNNER_COLORS = [
-    '#00d4ff', '#7c3aed', '#10b981', '#f59e0b', '#ef4444',
-    '#ec4899', '#06b6d4', '#84cc16', '#f97316', '#8b5cf6',
-    '#14b8a6', '#e11d48', '#0ea5e9', '#a855f7', '#22c55e',
-    '#eab308', '#3b82f6', '#d946ef', '#64748b', '#fb923c'
-];
+const COLORS = ['#00d4ff','#7c3aed','#10b981','#f59e0b','#ef4444','#ec4899','#06b6d4','#84cc16','#f97316','#8b5cf6','#14b8a6','#e11d48','#0ea5e9','#a855f7','#22c55e'];
 
-// ============ INICIALIZAÇÃO ============
+// ======= INIT =======
 document.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => {
-        document.getElementById('loading-screen').style.opacity = '0';
-        setTimeout(() => {
-            document.getElementById('loading-screen').classList.add('hidden');
-            document.getElementById('main-menu').classList.remove('hidden');
-        }, 500);
-    }, 2200);
-    createParticles();
+        const ls = document.getElementById('loading-screen');
+        ls.classList.add('fade');
+        setTimeout(() => { ls.classList.add('hidden'); show('main-menu'); }, 500);
+    }, 2000);
+    mkParticles();
+    checkConn();
 });
 
-function createParticles() {
-    const container = document.getElementById('particles');
-    for (let i = 0; i < 30; i++) {
+function mkParticles() {
+    const c = document.getElementById('particles');
+    for (let i = 0; i < 25; i++) {
         const p = document.createElement('div');
         p.className = 'particle';
-        p.style.left = Math.random() * 100 + '%';
-        p.style.animationDuration = (5 + Math.random() * 10) + 's';
-        p.style.animationDelay = Math.random() * 5 + 's';
-        p.style.width = p.style.height = (2 + Math.random() * 3) + 'px';
-        container.appendChild(p);
+        p.style.cssText = `left:${Math.random()*100}%;width:${2+Math.random()*2}px;height:${2+Math.random()*2}px;animation-duration:${6+Math.random()*8}s;animation-delay:${Math.random()*4}s;`;
+        c.appendChild(p);
     }
 }
 
-// ============ TOASTS ============
-function showToast(message, type = 'info') {
-    const container = document.getElementById('toast-container');
-    const icons = {
-        success: 'fas fa-check-circle',
-        error: 'fas fa-exclamation-circle',
-        info: 'fas fa-info-circle',
-        warning: 'fas fa-exclamation-triangle'
+async function checkConn() {
+    const d = document.getElementById('conn-dot');
+    const t = document.getElementById('conn-text');
+    try {
+        const r = await apiFetch('GET');
+        if (r) { d.className = 'status-dot on'; t.textContent = 'Conectado'; }
+        else throw 0;
+    } catch {
+        d.className = 'status-dot off'; t.textContent = 'Offline';
+    }
+}
+
+// ======= HELPERS =======
+function show(id) { document.getElementById(id).classList.remove('hidden'); }
+function hide(id) { document.getElementById(id).classList.add('hidden'); }
+function $(id) { return document.getElementById(id); }
+function uid() { return Date.now().toString(36) + Math.random().toString(36).substr(2, 5); }
+function pad(n) { return n.toString().padStart(2, '0'); }
+
+function fmtTime(ms) {
+    const s = Math.floor(ms / 1000);
+    return `${pad(Math.floor(s/3600))}:${pad(Math.floor(s%3600/60))}:${pad(s%60)}`;
+}
+function fmtShort(ms) {
+    const s = Math.floor(ms / 1000);
+    return `${pad(Math.floor(s/60))}:${pad(s%60)}`;
+}
+
+function toast(msg, type = 'inf') {
+    const ic = { ok:'fa-check-circle', err:'fa-exclamation-circle', inf:'fa-info-circle', wrn:'fa-exclamation-triangle' };
+    const el = document.createElement('div');
+    el.className = `toast ${type}`;
+    el.innerHTML = `<i class="fas ${ic[type]}"></i><span>${msg}</span>`;
+    $('toasts').appendChild(el);
+    setTimeout(() => { el.style.transition = 'all .3s'; el.style.opacity = '0'; el.style.transform = 'translateX(100%)'; setTimeout(() => el.remove(), 300); }, 3000);
+}
+
+function mkCode() {
+    const c = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let r = 'RACE-';
+    for (let i = 0; i < 6; i++) r += c[Math.floor(Math.random() * c.length)];
+    return r;
+}
+
+function haversine(a, b, c, d) {
+    const R = 6371, dL = (c-a)*Math.PI/180, dN = (d-b)*Math.PI/180;
+    const x = Math.sin(dL/2)**2 + Math.cos(a*Math.PI/180)*Math.cos(c*Math.PI/180)*Math.sin(dN/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1-x));
+}
+
+function beep() {
+    try {
+        const c = new (window.AudioContext||window.webkitAudioContext)();
+        const o = c.createOscillator(), g = c.createGain();
+        o.connect(g); g.connect(c.destination);
+        o.frequency.setValueAtTime(880, c.currentTime);
+        o.frequency.setValueAtTime(1100, c.currentTime + .1);
+        g.gain.setValueAtTime(.2, c.currentTime);
+        g.gain.exponentialRampToValueAtTime(.01, c.currentTime + .3);
+        o.start(); o.stop(c.currentTime + .3);
+    } catch {}
+}
+
+// ======= API (com retry e debounce) =======
+let lastWrite = 0;
+
+async function apiFetch(method, body) {
+    const url = CFG.API + CFG.BIN_ID + (method === 'GET' ? '/latest' : '');
+    const opts = {
+        method: method === 'GET' ? 'GET' : 'PUT',
+        headers: { 'X-Master-Key': CFG.MASTER_KEY },
     };
-    const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
-    toast.innerHTML = `
-        <i class="toast-icon ${icons[type]}"></i>
-        <span class="toast-message">${message}</span>
-    `;
-    container.appendChild(toast);
-    setTimeout(() => {
-        toast.style.opacity = '0';
-        toast.style.transform = 'translateX(100%)';
-        toast.style.transition = 'all 0.3s';
-        setTimeout(() => toast.remove(), 300);
-    }, 3500);
+    if (body) {
+        opts.headers['Content-Type'] = 'application/json';
+        opts.body = JSON.stringify(body);
+    }
+
+    for (let i = 0; i < 3; i++) {
+        try {
+            const r = await fetch(url, opts);
+            if (!r.ok) throw new Error(r.status);
+            const j = await r.json();
+            return method === 'GET' ? j.record : true;
+        } catch (e) {
+            if (i < 2) await new Promise(r => setTimeout(r, 500 * (i + 1)));
+            else { console.error('API fail:', e); return null; }
+        }
+    }
 }
 
-// ============ MODAIS ============
-function showCreateRoom() {
-    document.getElementById('create-modal').classList.remove('hidden');
-    setTimeout(() => initRouteMap(), 100);
+async function readData() {
+    return await apiFetch('GET');
 }
 
-function showJoinRoom() {
-    document.getElementById('join-modal').classList.remove('hidden');
+async function writeData(data) {
+    const now = Date.now();
+    if (now - lastWrite < 400) {
+        await new Promise(r => setTimeout(r, 400 - (now - lastWrite)));
+    }
+    lastWrite = Date.now();
+    return await apiFetch('PUT', data);
 }
 
-function closeModals() {
-    document.getElementById('create-modal').classList.add('hidden');
-    document.getElementById('join-modal').classList.add('hidden');
+async function safeUpdate(fn) {
+    if (S.busy) return false;
+    S.busy = true;
+    try {
+        const data = await readData();
+        if (!data) { S.busy = false; return false; }
+        const room = data.rooms?.[S.room];
+        if (!room) { S.busy = false; return false; }
+        fn(data, room);
+        const ok = await writeData(data);
+        S.busy = false;
+        return ok;
+    } catch (e) {
+        console.error('safeUpdate:', e);
+        S.busy = false;
+        return false;
+    }
 }
 
-// ============ MAPA DE ROTA ============
+// ======= MODALS =======
+function showCreateRoom() { show('create-modal'); setTimeout(initRouteMap, 150); }
+function showJoinRoom() { show('join-modal'); }
+function closeModals() { hide('create-modal'); hide('join-modal'); }
+
+// ======= ROUTE MAP =======
 function initRouteMap() {
-    if (state.routeMap) { state.routeMap.invalidateSize(); return; }
-
-    state.routeMap = L.map('route-map').setView([-23.5505, -46.6333], 13);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        attribution: '© CartoDB'
-    }).addTo(state.routeMap);
+    if (S.maps.route) { S.maps.route.invalidateSize(); return; }
+    S.maps.route = L.map('route-map').setView([-23.55, -46.63], 13);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(S.maps.route);
 
     if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(pos => {
-            state.routeMap.setView([pos.coords.latitude, pos.coords.longitude], 15);
-        });
+        navigator.geolocation.getCurrentPosition(p => {
+            S.maps.route.setView([p.coords.latitude, p.coords.longitude], 15);
+        }, () => {}, { timeout: 5000 });
     }
 
-    state.routeMap.on('click', (e) => {
-        const { lat, lng } = e.latlng;
-        state.routePoints.push([lat, lng]);
-        const markerIcon = L.divIcon({
+    S.maps.route.on('click', e => {
+        S.routePts.push([e.latlng.lat, e.latlng.lng]);
+        const n = S.routePts.length;
+        const ic = L.divIcon({
             className: 'custom-marker',
-            html: `<div class="marker-dot" style="background: var(--primary); border-color: var(--primary);">
-                     <span class="marker-label">${state.routePoints.length === 1 ? '🏁 INÍCIO' : 'P' + state.routePoints.length}</span>
-                   </div>`,
-            iconSize: [20, 20], iconAnchor: [10, 10]
+            html: `<div class="mk-dot" style="background:${n===1?'#10b981':'#00d4ff'};border-color:${n===1?'#10b981':'#00d4ff'}"><span class="mk-label">${n===1?'🏁 INÍCIO':'P'+n}</span></div>`,
+            iconSize: [18,18], iconAnchor: [9,9]
         });
-        L.marker([lat, lng], { icon: markerIcon }).addTo(state.routeMap);
-        if (state.routeLine) state.routeMap.removeLayer(state.routeLine);
-        if (state.routePoints.length > 1) {
-            state.routeLine = L.polyline(state.routePoints, {
-                color: '#00d4ff', weight: 3, dashArray: '10, 10'
-            }).addTo(state.routeMap);
-        }
+        L.marker(e.latlng, { icon: ic }).addTo(S.maps.route);
+        if (S.lines.route) S.maps.route.removeLayer(S.lines.route);
+        if (n > 1) S.lines.route = L.polyline(S.routePts, { color: '#00d4ff', weight: 3, dashArray: '8,8' }).addTo(S.maps.route);
     });
 }
 
 function clearRoute() {
-    state.routePoints = [];
-    if (state.routeMap) {
-        state.routeMap.eachLayer(layer => {
-            if (layer instanceof L.Marker || layer instanceof L.Polyline) {
-                state.routeMap.removeLayer(layer);
-            }
-        });
+    S.routePts = [];
+    if (S.maps.route) {
+        S.maps.route.eachLayer(l => { if (l instanceof L.Marker || l instanceof L.Polyline) S.maps.route.removeLayer(l); });
     }
-    state.routeLine = null;
-    showToast('Trajeto limpo', 'info');
+    S.lines.route = null;
+    toast('Trajeto limpo', 'inf');
 }
 
-// ============ JSONBIN API ============
-async function readBin() {
-    try {
-        const res = await fetch(CONFIG.API_URL + CONFIG.BIN_ID + '/latest', {
-            headers: { 'X-Master-Key': CONFIG.MASTER_KEY }
-        });
-        if (!res.ok) throw new Error('Erro ao ler bin');
-        const data = await res.json();
-        return data.record;
-    } catch (err) {
-        console.error('Read error:', err);
-        return null;
-    }
-}
-
-async function updateBin(data) {
-    try {
-        const res = await fetch(CONFIG.API_URL + CONFIG.BIN_ID, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Master-Key': CONFIG.MASTER_KEY
-            },
-            body: JSON.stringify(data)
-        });
-        if (!res.ok) throw new Error('Erro ao atualizar bin');
-        return true;
-    } catch (err) {
-        console.error('Update error:', err);
-        return false;
-    }
-}
-
-// ============ GERAR CÓDIGOS ============
-function generateRoomCode() {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    let code = 'RACE-';
-    for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
-    return code;
-}
-
-function generateRunnerId() {
-    return 'runner_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
-}
-
-function generateMsgId() {
-    return 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4);
-}
-
-// ============ CRIAR SALA ============
+// ======= CREATE ROOM =======
 async function createRoom() {
-    const name = document.getElementById('race-name').value.trim();
-    const distance = parseFloat(document.getElementById('race-distance').value);
-    const type = document.getElementById('race-type').value;
-    const maxRunners = parseInt(document.getElementById('max-runners').value);
+    const name = $('race-name').value.trim();
+    const dist = parseFloat($('race-distance').value);
+    const type = $('race-type').value;
+    const max = parseInt($('max-runners').value) || 20;
 
-    if (!name) { showToast('Digite o nome da corrida', 'error'); return; }
-    if (!distance || distance <= 0) { showToast('Distância inválida', 'error'); return; }
+    if (!name) return toast('Nome obrigatório', 'err');
+    if (!dist || dist <= 0) return toast('Distância inválida', 'err');
 
-    const roomCode = generateRoomCode();
+    const btn = $('create-btn');
+    btn.classList.add('loading'); btn.disabled = true;
 
-    const raceData = {
-        rooms: {
-            [roomCode]: {
-                name, distance, type, maxRunners,
-                route: state.routePoints,
-                status: 'waiting',
-                createdAt: Date.now(),
-                startTime: null,
-                pausedTime: 0,
-                runners: {},
-                // Sistema de comunicação
-                messages: [],
-                audioData: null,
-                audioId: null,
-                isTransmitting: false
-            }
-        }
+    const code = mkCode();
+    const roomData = {
+        name, distance: dist, type, maxRunners: max,
+        route: S.routePts, status: 'waiting',
+        created: Date.now(), startTime: null, pausedTime: 0,
+        runners: {}, messages: [], audioData: null, audioId: null, transmitting: false,
     };
 
-    const existing = await readBin();
-    if (existing && existing.rooms) {
-        raceData.rooms = { ...existing.rooms, ...raceData.rooms };
-    }
+    const data = await readData() || {};
+    if (!data.rooms) data.rooms = {};
+    data.rooms[code] = roomData;
 
-    const success = await updateBin(raceData);
-    if (success) {
-        state.role = 'admin';
-        state.roomCode = roomCode;
-        state.raceData = raceData.rooms[roomCode];
+    const ok = await writeData(data);
+    btn.classList.remove('loading'); btn.disabled = false;
+
+    if (ok) {
+        S.role = 'admin'; S.room = code; S.data = roomData;
         closeModals();
-        showAdminScreen();
-        showToast(`Sala ${roomCode} criada com sucesso!`, 'success');
+        initAdminScreen();
+        toast(`Sala ${code} criada!`, 'ok');
     } else {
-        showToast('Erro ao criar sala.', 'error');
+        toast('Erro ao criar sala', 'err');
     }
 }
 
-// ============ ENTRAR NA SALA ============
+// ======= JOIN ROOM =======
 async function joinRoom() {
-    const code = document.getElementById('room-code').value.trim().toUpperCase();
-    const name = document.getElementById('runner-name').value.trim();
+    const code = $('room-code').value.trim().toUpperCase();
+    const name = $('runner-name').value.trim();
 
-    if (!code) { showToast('Digite o código da sala', 'error'); return; }
-    if (!name) { showToast('Digite seu nome', 'error'); return; }
+    if (!code) return toast('Código obrigatório', 'err');
+    if (!name) return toast('Nome obrigatório', 'err');
+    if (!navigator.geolocation) return toast('GPS não disponível', 'err');
 
-    const data = await readBin();
-    if (!data || !data.rooms || !data.rooms[code]) {
-        showToast('Sala não encontrada!', 'error');
-        return;
-    }
+    const btn = $('join-btn');
+    btn.classList.add('loading'); btn.disabled = true;
+
+    const data = await readData();
+    btn.classList.remove('loading'); btn.disabled = false;
+
+    if (!data?.rooms?.[code]) return toast('Sala não encontrada', 'err');
 
     const room = data.rooms[code];
-    const runnerCount = Object.keys(room.runners || {}).length;
-    if (runnerCount >= room.maxRunners) { showToast('Sala cheia!', 'error'); return; }
-    if (room.status === 'finished') { showToast('Corrida já finalizada!', 'error'); return; }
+    if (room.status === 'finished') return toast('Corrida já finalizada', 'err');
+    if (Object.keys(room.runners || {}).length >= room.maxRunners) return toast('Sala cheia', 'err');
 
-    if (!navigator.geolocation) { showToast('GPS não suportado!', 'error'); return; }
-
-    const runnerId = generateRunnerId();
-    if (!data.rooms[code].runners) data.rooms[code].runners = {};
-    data.rooms[code].runners[runnerId] = {
-        name, joinedAt: Date.now(),
+    const rid = 'r_' + uid();
+    if (!room.runners) room.runners = {};
+    room.runners[rid] = {
+        name, joined: Date.now(),
         lat: 0, lng: 0, speed: 0, distance: 0,
-        lastUpdate: Date.now(), active: true, finished: false, finishTime: null
+        lastUpdate: Date.now(), active: true, finished: false,
     };
 
-    const success = await updateBin(data);
-    if (success) {
-        state.role = 'runner';
-        state.roomCode = code;
-        state.runnerId = runnerId;
-        state.runnerName = name;
-        state.raceData = data.rooms[code];
+    const ok = await writeData(data);
+    if (ok) {
+        S.role = 'runner'; S.room = code; S.rid = rid; S.rname = name; S.data = room;
         closeModals();
-        showRunnerScreen();
-        startGPSTracking();
-        showToast(`Bem-vindo, ${name}! 🏃`, 'success');
+        initRunnerScreen();
+        toast(`Bem-vindo, ${name}! 🏃`, 'ok');
     } else {
-        showToast('Erro ao entrar.', 'error');
+        toast('Erro ao entrar', 'err');
     }
 }
 
-// ============ TELA ADMIN ============
-function showAdminScreen() {
-    document.getElementById('main-menu').classList.add('hidden');
-    document.getElementById('admin-screen').classList.remove('hidden');
+// ======= ADMIN SCREEN =======
+function initAdminScreen() {
+    hide('main-menu'); show('admin-screen');
 
-    document.getElementById('admin-room-code').textContent = state.roomCode;
-    document.getElementById('info-name').textContent = state.raceData.name;
-    document.getElementById('info-distance').textContent = state.raceData.distance + ' km';
-    document.getElementById('info-type').textContent = {
-        linear: 'Linear', circular: 'Circular', free: 'Livre'
-    }[state.raceData.type];
+    $('admin-room-code').textContent = S.room;
+    $('info-name').textContent = S.data.name;
+    $('info-dist').textContent = S.data.distance + ' km';
+    $('info-type').textContent = { linear: 'Linear', circular: 'Circular', free: 'Livre' }[S.data.type];
 
-    setTimeout(() => initAdminMap(), 100);
-    startAdminUpdates();
+    setTimeout(initAdminMap, 150);
+    startPolling();
 }
 
 function initAdminMap() {
-    if (state.adminMap) return;
+    if (S.maps.admin) return;
+    S.maps.admin = L.map('admin-map').setView([-23.55, -46.63], 14);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(S.maps.admin);
 
-    state.adminMap = L.map('admin-map').setView([-23.5505, -46.6333], 14);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        attribution: '© CartoDB'
-    }).addTo(state.adminMap);
+    if (S.data.route?.length) {
+        const line = L.polyline(S.data.route, { color: '#00d4ff', weight: 4, opacity: .5, dashArray: '10,10' }).addTo(S.maps.admin);
 
-    if (state.raceData.route && state.raceData.route.length > 0) {
-        const routeLine = L.polyline(state.raceData.route, {
-            color: '#00d4ff', weight: 4, opacity: 0.6, dashArray: '10, 10'
-        }).addTo(state.adminMap);
-
-        const startIcon = L.divIcon({
+        const mkIc = (c, txt) => L.divIcon({
             className: 'custom-marker',
-            html: `<div class="marker-dot" style="background: #10b981; border-color: #10b981;">
-                     <span class="marker-label">🏁 INÍCIO</span></div>`,
-            iconSize: [20, 20], iconAnchor: [10, 10]
+            html: `<div class="mk-dot" style="background:${c};border-color:${c}"><span class="mk-label">${txt}</span></div>`,
+            iconSize: [18,18], iconAnchor: [9,9]
         });
-        const endIcon = L.divIcon({
+
+        L.marker(S.data.route[0], { icon: mkIc('#10b981', '🏁 INÍCIO') }).addTo(S.maps.admin);
+        if (S.data.route.length > 1) {
+            L.marker(S.data.route[S.data.route.length - 1], { icon: mkIc('#ef4444', '🏁 FIM') }).addTo(S.maps.admin);
+        }
+        S.maps.admin.fitBounds(line.getBounds().pad(0.2));
+    } else if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(p => {
+            S.maps.admin.setView([p.coords.latitude, p.coords.longitude], 15);
+        }, () => {}, { timeout: 5000 });
+    }
+}
+
+// ======= POLLING =======
+function startPolling() {
+    S.pollId = setInterval(async () => {
+        const data = await readData();
+        if (!data?.rooms?.[S.room]) return;
+        S.data = data.rooms[S.room];
+
+        if (S.role === 'admin') updateAdmin();
+        else updateRunner();
+    }, CFG.POLL);
+}
+
+function updateAdmin() {
+    const runners = S.data.runners || {};
+    const n = Object.keys(runners).length;
+    $('info-count').textContent = `${n}/${S.data.maxRunners}`;
+
+    // Ranking
+    const el = $('ranking');
+    if (!n) { el.innerHTML = '<div class="empty"><i class="fas fa-users"></i><p>Aguardando...</p></div>'; return; }
+
+    const sorted = Object.entries(runners).sort((a, b) => (b[1].distance||0) - (a[1].distance||0));
+    el.innerHTML = sorted.map(([id, r], i) => {
+        const cls = i === 0 ? 'g' : i === 1 ? 's' : i === 2 ? 'b' : '';
+        const dot = (Date.now() - (r.lastUpdate||0)) < 10000 ? 'on' : 'off';
+        return `<div class="rank ${cls}">
+            <div class="rank-pos">${i+1}</div>
+            <div class="rank-info"><div class="rank-name">${r.name}</div>
+            <div class="rank-meta"><span>🏃${(r.speed||0).toFixed(1)}</span><span>📏${(r.distance||0).toFixed(2)}km</span></div></div>
+            <div class="rank-dot ${dot}"></div></div>`;
+    }).join('');
+
+    // Markers
+    sorted.forEach(([id, r], i) => {
+        if (!r.lat || !r.lng) return;
+        const c = COLORS[i % COLORS.length];
+        const ic = L.divIcon({
             className: 'custom-marker',
-            html: `<div class="marker-dot" style="background: #ef4444; border-color: #ef4444;">
-                     <span class="marker-label">🏁 FIM</span></div>`,
-            iconSize: [20, 20], iconAnchor: [10, 10]
+            html: `<div class="mk-dot" style="background:${c};border-color:${c}"><span class="mk-label">${r.name}</span></div>`,
+            iconSize: [18,18], iconAnchor: [9,9]
         });
-
-        L.marker(state.raceData.route[0], { icon: startIcon }).addTo(state.adminMap);
-        if (state.raceData.route.length > 1) {
-            L.marker(state.raceData.route[state.raceData.route.length - 1], { icon: endIcon }).addTo(state.adminMap);
-        }
-        state.adminMap.fitBounds(routeLine.getBounds().pad(0.2));
-    } else {
-        if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(pos => {
-                state.adminMap.setView([pos.coords.latitude, pos.coords.longitude], 15);
-            });
-        }
-    }
-}
-
-// ============ ATUALIZAÇÕES ADMIN ============
-function startAdminUpdates() {
-    state.updateTimer = setInterval(async () => {
-        const data = await readBin();
-        if (!data || !data.rooms || !data.rooms[state.roomCode]) return;
-        state.raceData = data.rooms[state.roomCode];
-        updateAdminUI();
-        updateRunnerMarkers();
-    }, CONFIG.UPDATE_INTERVAL);
-}
-
-function updateAdminUI() {
-    const runners = state.raceData.runners || {};
-    const count = Object.keys(runners).length;
-    document.getElementById('info-runners').textContent = count + '/' + state.raceData.maxRunners;
-
-    const rankingList = document.getElementById('ranking-list');
-    if (count === 0) {
-        rankingList.innerHTML = `<div class="empty-state"><i class="fas fa-users"></i><p>Aguardando corredores...</p></div>`;
-        return;
-    }
-
-    const sorted = Object.entries(runners).sort((a, b) => (b[1].distance || 0) - (a[1].distance || 0));
-
-    let html = '';
-    sorted.forEach(([id, runner], index) => {
-        const topClass = index === 0 ? 'top-1' : index === 1 ? 'top-2' : index === 2 ? 'top-3' : '';
-        const statusClass = runner.active ? 'active' : 'inactive';
-        html += `
-            <div class="rank-item ${topClass}">
-                <div class="rank-position">${index + 1}</div>
-                <div class="rank-info">
-                    <div class="rank-name">${runner.name}</div>
-                    <div class="rank-stats">
-                        <span>🏃 ${(runner.speed || 0).toFixed(1)} km/h</span>
-                        <span>📏 ${(runner.distance || 0).toFixed(2)} km</span>
-                    </div>
-                </div>
-                <div class="rank-status-dot ${statusClass}"></div>
-            </div>`;
-    });
-    rankingList.innerHTML = html;
-}
-
-function updateRunnerMarkers() {
-    const runners = state.raceData.runners || {};
-    Object.entries(runners).forEach(([id, runner], index) => {
-        if (!runner.lat || !runner.lng) return;
-        const color = RUNNER_COLORS[index % RUNNER_COLORS.length];
-        const icon = L.divIcon({
-            className: 'custom-marker',
-            html: `<div class="marker-dot" style="background: ${color}; border-color: ${color};">
-                     <span class="marker-label">${runner.name}</span></div>`,
-            iconSize: [20, 20], iconAnchor: [10, 10]
-        });
-
-        if (state.markers[id]) {
-            state.markers[id].setLatLng([runner.lat, runner.lng]);
-            state.markers[id].setIcon(icon);
-        } else {
-            state.markers[id] = L.marker([runner.lat, runner.lng], { icon }).addTo(state.adminMap);
-        }
+        if (S.markers[id]) { S.markers[id].setLatLng([r.lat, r.lng]).setIcon(ic); }
+        else { S.markers[id] = L.marker([r.lat, r.lng], { icon: ic }).addTo(S.maps.admin); }
     });
 }
 
-// ============ 🎙️ SISTEMA DE VOZ DO ADMIN ============
-
-async function initAudioSystem() {
-    try {
-        state.audioStream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-                echoCancellation: true,
-                noiseSuppression: true,
-                sampleRate: 44100
-            }
-        });
-
-        state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        state.analyser = state.audioContext.createAnalyser();
-        state.analyser.fftSize = 256;
-
-        const source = state.audioContext.createMediaStreamSource(state.audioStream);
-        source.connect(state.analyser);
-
-        showToast('🎙️ Microfone ativado!', 'success');
-        return true;
-    } catch (err) {
-        console.error('Erro ao acessar microfone:', err);
-        showToast('Erro ao acessar microfone: ' + err.message, 'error');
-        return false;
-    }
-}
-
-function toggleVoiceMode() {
-    state.continuousMode = document.getElementById('voice-mode').checked;
-    const pttBtn = document.getElementById('ptt-btn');
-
-    if (state.continuousMode) {
-        pttBtn.innerHTML = '<i class="fas fa-broadcast-tower"></i><span>Modo contínuo ativo</span>';
-        pttBtn.disabled = true;
-        pttBtn.style.opacity = '0.5';
-    } else {
-        pttBtn.innerHTML = '<i class="fas fa-walkie-talkie"></i><span>Pressione para falar</span>';
-        pttBtn.disabled = false;
-        pttBtn.style.opacity = '1';
-    }
-}
-
-async function toggleMicrophone() {
-    const micBtn = document.getElementById('mic-toggle');
-    const voiceStatus = document.getElementById('voice-status');
-
-    if (!state.micActive) {
-        const success = await initAudioSystem();
-        if (!success) return;
-
-        state.micActive = true;
-        micBtn.classList.add('active');
-        micBtn.innerHTML = '<i class="fas fa-microphone"></i>';
-        voiceStatus.innerHTML = '<i class="fas fa-microphone"></i><span>Microfone ativo - pronto</span>';
-        voiceStatus.className = 'voice-status active';
-
-        if (state.continuousMode) {
-            startContinuousRecording();
-        }
-    } else {
-        stopAllRecording();
-        if (state.audioStream) {
-            state.audioStream.getTracks().forEach(track => track.stop());
-        }
-        state.micActive = false;
-        micBtn.classList.remove('active');
-        micBtn.innerHTML = '<i class="fas fa-microphone"></i>';
-        voiceStatus.innerHTML = '<i class="fas fa-microphone-slash"></i><span>Microfone desligado</span>';
-        voiceStatus.className = 'voice-status';
-
-        document.getElementById('voice-visualizer').classList.remove('active');
-        cancelAnimationFrame(state.visualizerAnimFrame);
-        setTransmittingStatus(false);
-    }
-}
-
-function startPTT() {
-    if (!state.micActive || state.continuousMode) return;
-
-    const pttBtn = document.getElementById('ptt-btn');
-    pttBtn.classList.add('active');
-    pttBtn.innerHTML = '<i class="fas fa-satellite-dish"></i><span>🔴 Transmitindo...</span>';
-
-    startRecording();
-}
-
-function stopPTT() {
-    if (!state.micActive || state.continuousMode) return;
-
-    const pttBtn = document.getElementById('ptt-btn');
-    pttBtn.classList.remove('active');
-    pttBtn.innerHTML = '<i class="fas fa-walkie-talkie"></i><span>Pressione para falar</span>';
-
-    stopRecording();
-}
-
-async function startRecording() {
-    if (!state.audioStream || state.isRecording) return;
-
-    state.isRecording = true;
-    state.audioChunks = [];
-
-    state.mediaRecorder = new MediaRecorder(state.audioStream, {
-        mimeType: 'audio/webm;codecs=opus'
-    });
-
-    state.mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-            state.audioChunks.push(e.data);
-        }
-    };
-
-    state.mediaRecorder.onstop = async () => {
-        if (state.audioChunks.length > 0) {
-            const audioBlob = new Blob(state.audioChunks, { type: 'audio/webm' });
-            await sendAudioToRunners(audioBlob);
-        }
-    };
-
-    state.mediaRecorder.start(500); // Chunks a cada 500ms
-
-    // Visualizador
-    document.getElementById('voice-visualizer').classList.add('active');
-    startVisualizer();
-    setTransmittingStatus(true);
-
-    const voiceStatus = document.getElementById('voice-status');
-    voiceStatus.innerHTML = '<i class="fas fa-circle" style="color: var(--danger);"></i><span>🔴 Gravando e transmitindo...</span>';
-    voiceStatus.className = 'voice-status recording';
-}
-
-function stopRecording() {
-    if (!state.isRecording || !state.mediaRecorder) return;
-
-    state.isRecording = false;
-
-    if (state.mediaRecorder.state !== 'inactive') {
-        state.mediaRecorder.stop();
-    }
-
-    document.getElementById('voice-visualizer').classList.remove('active');
-    cancelAnimationFrame(state.visualizerAnimFrame);
-    setTransmittingStatus(false);
-
-    const voiceStatus = document.getElementById('voice-status');
-    voiceStatus.innerHTML = '<i class="fas fa-microphone"></i><span>Microfone ativo - pronto</span>';
-    voiceStatus.className = 'voice-status active';
-}
-
-function startContinuousRecording() {
-    startRecording();
-
-    // Reinicia a gravação periodicamente para enviar chunks
-    state.continuousInterval = setInterval(() => {
-        if (state.isRecording && state.mediaRecorder && state.mediaRecorder.state === 'recording') {
-            state.mediaRecorder.stop();
-            setTimeout(() => {
-                if (state.micActive && state.continuousMode) {
-                    startRecording();
-                }
-            }, 100);
-        }
-    }, 3000); // Envia áudio a cada 3 segundos
-}
-
-function stopAllRecording() {
-    stopRecording();
-    if (state.continuousInterval) {
-        clearInterval(state.continuousInterval);
-        state.continuousInterval = null;
-    }
-}
-
-// Visualizador de áudio
-function startVisualizer() {
-    if (!state.analyser) return;
-
-    const bars = document.querySelectorAll('.voice-bar');
-    const bufferLength = state.analyser.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
-
-    function animate() {
-        state.visualizerAnimFrame = requestAnimationFrame(animate);
-        state.analyser.getByteFrequencyData(dataArray);
-
-        bars.forEach((bar, i) => {
-            const index = Math.floor(i * bufferLength / bars.length);
-            const value = dataArray[index];
-            const height = Math.max(3, (value / 255) * 35);
-            bar.style.height = height + 'px';
-
-            // Cor dinâmica baseada na intensidade
-            const intensity = value / 255;
-            if (intensity > 0.7) {
-                bar.style.background = '#ef4444';
-            } else if (intensity > 0.4) {
-                bar.style.background = '#f59e0b';
-            } else {
-                bar.style.background = '#00d4ff';
-            }
-        });
-    }
-    animate();
-}
-
-// Enviar áudio como base64 via JSONBin
-async function sendAudioToRunners(audioBlob) {
-    try {
-        const reader = new FileReader();
-        reader.onloadend = async () => {
-            const base64Audio = reader.result;
-            const audioId = 'audio_' + Date.now();
-
-            const data = await readBin();
-            if (!data || !data.rooms || !data.rooms[state.roomCode]) return;
-
-            data.rooms[state.roomCode].audioData = base64Audio;
-            data.rooms[state.roomCode].audioId = audioId;
-            data.rooms[state.roomCode].isTransmitting = true;
-            data.rooms[state.roomCode].audioTimestamp = Date.now();
-
-            await updateBin(data);
-        };
-        reader.readAsDataURL(audioBlob);
-    } catch (err) {
-        console.error('Erro ao enviar áudio:', err);
-    }
-}
-
-async function setTransmittingStatus(isTransmitting) {
-    try {
-        const data = await readBin();
-        if (!data || !data.rooms || !data.rooms[state.roomCode]) return;
-        data.rooms[state.roomCode].isTransmitting = isTransmitting;
-        await updateBin(data);
-    } catch (err) {
-        console.error('Erro ao atualizar status:', err);
-    }
-}
-
-// ============ 📨 MENSAGENS DE TEXTO ============
-
-async function sendQuickMessage(message) {
-    const msgId = generateMsgId();
-
-    const data = await readBin();
-    if (!data || !data.rooms || !data.rooms[state.roomCode]) return;
-
-    if (!data.rooms[state.roomCode].messages) {
-        data.rooms[state.roomCode].messages = [];
-    }
-
-    // Manter apenas as últimas 10 mensagens
-    const messages = data.rooms[state.roomCode].messages;
-    messages.push({
-        id: msgId,
-        text: message,
-        timestamp: Date.now(),
-        type: 'quick'
-    });
-
-    if (messages.length > 10) {
-        data.rooms[state.roomCode].messages = messages.slice(-10);
-    }
-
-    const success = await updateBin(data);
-    if (success) {
-        showToast(`📢 Mensagem enviada: "${message}"`, 'success');
-    }
-}
-
-async function sendCustomMessage() {
-    const input = document.getElementById('custom-msg-input');
-    const message = input.value.trim();
-
-    if (!message) {
-        showToast('Digite uma mensagem', 'warning');
-        return;
-    }
-
-    await sendQuickMessage('📢 ' + message);
-    input.value = '';
-}
-
-// ============ CONTROLES DA CORRIDA ============
+// ======= RACE CONTROLS =======
 async function startRace() {
-    const data = await readBin();
-    if (!data || !data.rooms[state.roomCode]) return;
+    const ok = await safeUpdate((data, room) => {
+        if (!Object.keys(room.runners || {}).length) throw 'empty';
+        room.status = 'running';
+        room.startTime = Date.now();
+        room.messages.push({ id: uid(), text: '🏁 LARGADA! BOA CORRIDA!', ts: Date.now() });
+    });
 
-    const runners = data.rooms[state.roomCode].runners || {};
-    if (Object.keys(runners).length === 0) {
-        showToast('Nenhum corredor na sala!', 'warning');
-        return;
-    }
-
-    data.rooms[state.roomCode].status = 'running';
-    data.rooms[state.roomCode].startTime = Date.now();
-
-    const success = await updateBin(data);
-    if (success) {
-        state.raceData = data.rooms[state.roomCode];
-        state.raceStartTime = data.rooms[state.roomCode].startTime;
-
-        document.getElementById('start-btn').classList.add('hidden');
-        document.getElementById('pause-btn').classList.remove('hidden');
-        document.getElementById('finish-btn').classList.remove('hidden');
-
-        const badge = document.getElementById('race-status-badge');
-        badge.innerHTML = '<span class="pulse-dot"></span> EM ANDAMENTO';
-        badge.className = 'race-status-badge running';
-
-        startTimer();
-        showToast('🏁 LARGADA DADA!', 'success');
-
-        // Enviar mensagem automática de largada
-        sendQuickMessage('🏁 A CORRIDA COMEÇOU! BOA SORTE A TODOS!');
+    if (ok) {
+        S.t0 = Date.now();
+        hide('btn-start'); show('btn-pause'); show('btn-finish');
+        $('status-badge').textContent = '🟢 EM ANDAMENTO';
+        $('status-badge').className = 'status-badge go';
+        startTick();
+        toast('🏁 LARGADA!', 'ok');
+    } else {
+        toast('Sem corredores na sala', 'wrn');
     }
 }
 
 async function pauseRace() {
-    const data = await readBin();
-    if (!data || !data.rooms[state.roomCode]) return;
-
-    data.rooms[state.roomCode].status = 'paused';
-    data.rooms[state.roomCode].pausedAt = Date.now();
-    await updateBin(data);
-
-    document.getElementById('pause-btn').classList.add('hidden');
-    document.getElementById('resume-btn').classList.remove('hidden');
-    clearInterval(state.timerInterval);
-
-    const badge = document.getElementById('race-status-badge');
-    badge.innerHTML = '<span class="pulse-dot"></span> PAUSADA';
-    badge.className = 'race-status-badge';
-
-    showToast('⏸ Corrida pausada', 'warning');
+    await safeUpdate((data, room) => {
+        room.status = 'paused';
+        room.pausedAt = Date.now();
+    });
+    hide('btn-pause'); show('btn-resume');
+    clearInterval(S.tickId);
+    $('status-badge').textContent = '⏸ PAUSADA';
+    $('status-badge').className = 'status-badge';
+    toast('Pausada', 'wrn');
 }
 
 async function resumeRace() {
-    const data = await readBin();
-    if (!data || !data.rooms[state.roomCode]) return;
-
-    const pauseDuration = Date.now() - (data.rooms[state.roomCode].pausedAt || Date.now());
-    data.rooms[state.roomCode].pausedTime = (data.rooms[state.roomCode].pausedTime || 0) + pauseDuration;
-    data.rooms[state.roomCode].status = 'running';
-    delete data.rooms[state.roomCode].pausedAt;
-
-    await updateBin(data);
-
-    document.getElementById('resume-btn').classList.add('hidden');
-    document.getElementById('pause-btn').classList.remove('hidden');
-    state.pausedTime = data.rooms[state.roomCode].pausedTime;
-    startTimer();
-
-    const badge = document.getElementById('race-status-badge');
-    badge.innerHTML = '<span class="pulse-dot"></span> EM ANDAMENTO';
-    badge.className = 'race-status-badge running';
-
-    showToast('▶ Corrida retomada', 'success');
+    await safeUpdate((data, room) => {
+        room.pausedTime = (room.pausedTime || 0) + (Date.now() - (room.pausedAt || Date.now()));
+        room.status = 'running';
+        delete room.pausedAt;
+    });
+    hide('btn-resume'); show('btn-pause');
+    const d = await readData();
+    if (d?.rooms?.[S.room]) { S.data = d.rooms[S.room]; S.paused = S.data.pausedTime || 0; }
+    startTick();
+    $('status-badge').textContent = '🟢 EM ANDAMENTO';
+    $('status-badge').className = 'status-badge go';
+    toast('Retomada', 'ok');
 }
 
 async function finishRace() {
-    if (!confirm('Deseja realmente finalizar a corrida?')) return;
-
-    const data = await readBin();
-    if (!data || !data.rooms[state.roomCode]) return;
-
-    data.rooms[state.roomCode].status = 'finished';
-    data.rooms[state.roomCode].finishedAt = Date.now();
-    await updateBin(data);
-
-    clearInterval(state.timerInterval);
-    clearInterval(state.updateTimer);
-    stopAllRecording();
-
-    state.raceData = data.rooms[state.roomCode];
-
-    const badge = document.getElementById('race-status-badge');
-    badge.innerHTML = '🏁 FINALIZADA';
-    badge.className = 'race-status-badge finished';
-
-    showToast('🏁 Corrida finalizada!', 'success');
-    setTimeout(() => showResults(), 1500);
+    if (!confirm('Finalizar a corrida?')) return;
+    await safeUpdate((data, room) => { room.status = 'finished'; room.finishedAt = Date.now(); });
+    clearInterval(S.tickId); clearInterval(S.pollId);
+    stopVoice();
+    $('status-badge').textContent = '🏁 FINALIZADA';
+    $('status-badge').className = 'status-badge end';
+    toast('Finalizada!', 'ok');
+    const d = await readData();
+    if (d?.rooms?.[S.room]) S.data = d.rooms[S.room];
+    setTimeout(showResults, 1200);
 }
 
 async function endRace() {
     if (!confirm('Encerrar e excluir a sala?')) return;
+    clearInterval(S.tickId); clearInterval(S.pollId); stopVoice();
+    const data = await readData();
+    if (data?.rooms?.[S.room]) { delete data.rooms[S.room]; await writeData(data); }
+    goHome();
+    toast('Sala encerrada', 'inf');
+}
 
-    clearInterval(state.timerInterval);
-    clearInterval(state.updateTimer);
-    stopAllRecording();
+function copyCode() {
+    navigator.clipboard?.writeText(S.room).then(() => toast('Copiado!', 'ok')).catch(() => toast('Erro', 'err'));
+}
 
-    const data = await readBin();
-    if (data && data.rooms && data.rooms[state.roomCode]) {
-        delete data.rooms[state.roomCode];
-        await updateBin(data);
+function startTick() {
+    if (!S.t0) { S.t0 = S.data.startTime; S.paused = S.data.pausedTime || 0; }
+    clearInterval(S.tickId);
+    S.tickId = setInterval(() => {
+        $('race-timer').textContent = fmtTime(Date.now() - S.t0 - S.paused);
+    }, 200);
+}
+
+// ======= 🎙️ VOICE SYSTEM =======
+async function initMic() {
+    try {
+        S.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+        S.actx = new (window.AudioContext || window.webkitAudioContext)();
+        S.analyser = S.actx.createAnalyser();
+        S.analyser.fftSize = 128;
+        S.actx.createMediaStreamSource(S.stream).connect(S.analyser);
+        return true;
+    } catch (e) {
+        toast('Mic: ' + e.message, 'err');
+        return false;
+    }
+}
+
+async function toggleMic() {
+    const btn = $('mic-btn'), st = $('voice-status');
+    if (!S.mic) {
+        if (!(await initMic())) return;
+        S.mic = true;
+        btn.classList.add('on');
+        st.innerHTML = '<i class="fas fa-microphone"></i><span>Mic ativo</span>';
+        st.className = 'voice-status on';
+        if (S.cont) startContRec();
+        toast('🎙️ Mic ativado', 'ok');
+    } else {
+        stopVoice();
+        S.mic = false;
+        btn.classList.remove('on');
+        st.innerHTML = '<i class="fas fa-microphone-slash"></i><span>Mic desligado</span>';
+        st.className = 'voice-status';
+    }
+}
+
+function toggleContinuous() {
+    S.cont = $('continuous-mode').checked;
+    const p = $('ptt-btn');
+    if (S.cont) { p.style.opacity = '.4'; p.style.pointerEvents = 'none'; if (S.mic) startContRec(); }
+    else { p.style.opacity = '1'; p.style.pointerEvents = 'auto'; stopRec(); }
+}
+
+function pttStart(e) { if (e) e.preventDefault(); if (!S.mic || S.cont) return; $('ptt-btn').classList.add('on'); startRec(); }
+function pttStop(e) { if (e) e.preventDefault(); if (!S.mic || S.cont) return; $('ptt-btn').classList.remove('on'); stopRec(); }
+
+function startRec() {
+    if (!S.stream || S.recording) return;
+    S.recording = true; S.chunks = [];
+
+    try {
+        S.recorder = new MediaRecorder(S.stream, { mimeType: 'audio/webm;codecs=opus' });
+    } catch {
+        S.recorder = new MediaRecorder(S.stream);
     }
 
-    backToMenu();
-    showToast('Sala encerrada', 'info');
+    S.recorder.ondataavailable = e => { if (e.data.size > 0) S.chunks.push(e.data); };
+    S.recorder.onstop = () => { if (S.chunks.length) sendAudio(new Blob(S.chunks, { type: 'audio/webm' })); };
+    S.recorder.start(300);
+
+    drawViz();
+    setTx(true);
+
+    $('voice-status').innerHTML = '<i class="fas fa-circle" style="color:var(--err)"></i><span>🔴 Transmitindo...</span>';
+    $('voice-status').className = 'voice-status rec';
 }
 
-function copyRoomCode() {
-    navigator.clipboard.writeText(state.roomCode)
-        .then(() => showToast('Código copiado!', 'success'))
-        .catch(() => showToast('Erro ao copiar', 'error'));
+function stopRec() {
+    if (!S.recording) return;
+    S.recording = false;
+    if (S.recorder?.state !== 'inactive') S.recorder?.stop();
+    cancelAnimationFrame(S.vizRaf);
+    clearCanvas();
+    setTx(false);
+
+    if (S.mic) {
+        $('voice-status').innerHTML = '<i class="fas fa-microphone"></i><span>Mic ativo</span>';
+        $('voice-status').className = 'voice-status on';
+    }
 }
 
-// ============ TIMER ============
-function startTimer() {
-    state.timerInterval = setInterval(() => {
-        const elapsed = Date.now() - state.raceStartTime - (state.pausedTime || 0);
-        document.getElementById('race-timer').textContent = formatTime(elapsed);
-    }, 100);
+function startContRec() {
+    startRec();
+    S.contInt = setInterval(() => {
+        if (S.recording && S.recorder?.state === 'recording') {
+            S.recorder.stop();
+            setTimeout(() => { if (S.mic && S.cont) startRec(); }, 100);
+        }
+    }, 3000);
 }
 
-function formatTime(ms) {
-    const totalSeconds = Math.floor(ms / 1000);
-    const h = Math.floor(totalSeconds / 3600);
-    const m = Math.floor((totalSeconds % 3600) / 60);
-    const s = totalSeconds % 60;
-    return `${pad(h)}:${pad(m)}:${pad(s)}`;
+function stopVoice() {
+    stopRec();
+    clearInterval(S.contInt);
+    if (S.stream) { S.stream.getTracks().forEach(t => t.stop()); S.stream = null; }
+    if (S.actx) { S.actx.close().catch(()=>{}); S.actx = null; S.analyser = null; }
 }
 
-function formatTimeShort(ms) {
-    const totalSeconds = Math.floor(ms / 1000);
-    const m = Math.floor(totalSeconds / 60);
-    const s = totalSeconds % 60;
-    return `${pad(m)}:${pad(s)}`;
+function drawViz() {
+    if (!S.analyser) return;
+    const canvas = $('viz-canvas');
+    const ctx = canvas.getContext('2d');
+    const buf = new Uint8Array(S.analyser.frequencyBinCount);
+
+    function frame() {
+        S.vizRaf = requestAnimationFrame(frame);
+        S.analyser.getByteFrequencyData(buf);
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const bars = 24, w = canvas.width / bars, gap = 2;
+
+        for (let i = 0; i < bars; i++) {
+            const idx = Math.floor(i * buf.length / bars);
+            const v = buf[idx] / 255;
+            const h = Math.max(2, v * canvas.height);
+
+            let color = '#00d4ff';
+            if (v > .7) color = '#ef4444';
+            else if (v > .4) color = '#f59e0b';
+
+            ctx.fillStyle = color;
+            ctx.fillRect(i * w + gap, canvas.height - h, w - gap * 2, h);
+        }
+    }
+    frame();
 }
 
-function pad(n) { return n.toString().padStart(2, '0'); }
+function clearCanvas() {
+    const c = $('viz-canvas');
+    c.getContext('2d').clearRect(0, 0, c.width, c.height);
+}
 
-// ============ TELA DO CORREDOR ============
-function showRunnerScreen() {
-    document.getElementById('main-menu').classList.add('hidden');
-    document.getElementById('runner-screen').classList.remove('hidden');
-    document.getElementById('runner-display-name').textContent = state.runnerName;
+async function sendAudio(blob) {
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+        await safeUpdate((data, room) => {
+            room.audioData = reader.result;
+            room.audioId = 'a_' + uid();
+            room.transmitting = true;
+            room.audioTs = Date.now();
+        });
+    };
+    reader.readAsDataURL(blob);
+}
 
-    setTimeout(() => initRunnerMap(), 100);
-    startRunnerUpdates();
+async function setTx(on) {
+    await safeUpdate((data, room) => { room.transmitting = on; });
+}
+
+// ======= MESSAGES =======
+async function sendMsg(text) {
+    const ok = await safeUpdate((data, room) => {
+        if (!room.messages) room.messages = [];
+        room.messages.push({ id: uid(), text, ts: Date.now() });
+        if (room.messages.length > 15) room.messages = room.messages.slice(-15);
+    });
+    if (ok) toast(`📢 "${text}"`, 'ok');
+}
+
+function sendCustom() {
+    const v = $('custom-input').value.trim();
+    if (!v) return toast('Digite algo', 'wrn');
+    sendMsg('📢 ' + v);
+    $('custom-input').value = '';
+}
+
+// ======= RUNNER SCREEN =======
+function initRunnerScreen() {
+    hide('main-menu'); show('runner-screen');
+    $('r-name-nav').textContent = S.rname;
+    setTimeout(initRunnerMap, 150);
+    startGPS();
+    startPolling();
 }
 
 function initRunnerMap() {
-    if (state.runnerMap) return;
-
-    state.runnerMap = L.map('runner-map').setView([-23.5505, -46.6333], 15);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        attribution: '© CartoDB'
-    }).addTo(state.runnerMap);
-
-    if (state.raceData.route && state.raceData.route.length > 1) {
-        L.polyline(state.raceData.route, {
-            color: '#00d4ff', weight: 3, opacity: 0.5, dashArray: '8, 8'
-        }).addTo(state.runnerMap);
+    if (S.maps.runner) return;
+    S.maps.runner = L.map('runner-map').setView([-23.55, -46.63], 15);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(S.maps.runner);
+    if (S.data.route?.length > 1) {
+        L.polyline(S.data.route, { color: '#00d4ff', weight: 3, opacity: .4, dashArray: '8,8' }).addTo(S.maps.runner);
     }
 }
 
-// ============ GPS ============
-function startGPSTracking() {
-    if (!navigator.geolocation) return;
+function startGPS() {
+    S.gpsId = navigator.geolocation.watchPosition(
+        pos => {
+            const { latitude: lat, longitude: lng, speed: sp } = pos.coords;
+            if (S.lastPos) {
+                const d = haversine(S.lastPos.lat, S.lastPos.lng, lat, lng);
+                if (d > CFG.GPS_MIN) { S.dist += d; S.trail.push([lat, lng]); }
+            } else { S.trail.push([lat, lng]); }
 
-    state.watchId = navigator.geolocation.watchPosition(
-        (position) => {
-            const { latitude, longitude, speed: gpsSpeed } = position.coords;
+            S.lastPos = { lat, lng };
+            const speed = sp ? sp * 3.6 : 0;
 
-            if (state.lastPosition) {
-                const dist = haversine(state.lastPosition.lat, state.lastPosition.lng, latitude, longitude);
-                if (dist > 0.002) {
-                    state.totalDistance += dist;
-                    state.positions.push([latitude, longitude]);
-                }
-            } else {
-                state.positions.push([latitude, longitude]);
-            }
+            $('s-speed').textContent = speed.toFixed(1);
+            $('s-dist').textContent = S.dist.toFixed(2);
 
-            state.lastPosition = { lat: latitude, lng: longitude };
-            const speed = gpsSpeed ? (gpsSpeed * 3.6) : 0;
+            if (S.maps.runner) {
+                S.maps.runner.setView([lat, lng]);
+                const ic = L.divIcon({
+                    className: 'custom-marker',
+                    html: '<div class="mk-dot" style="background:#00d4ff;border-color:#00d4ff"><span class="mk-label">Você</span></div>',
+                    iconSize: [18,18], iconAnchor: [9,9]
+                });
+                if (S.markers.me) S.markers.me.setLatLng([lat, lng]).setIcon(ic);
+                else S.markers.me = L.marker([lat, lng], { icon: ic }).addTo(S.maps.runner);
 
-            document.getElementById('stat-speed').textContent = speed.toFixed(1);
-            document.getElementById('stat-distance').textContent = state.totalDistance.toFixed(2);
-
-            if (state.runnerMap) {
-                state.runnerMap.setView([latitude, longitude], state.runnerMap.getZoom());
-
-                if (state.markers.self) {
-                    state.markers.self.setLatLng([latitude, longitude]);
-                } else {
-                    const icon = L.divIcon({
-                        className: 'custom-marker',
-                        html: `<div class="marker-dot" style="background: #00d4ff; border-color: #00d4ff;">
-                                 <span class="marker-label">Você</span></div>`,
-                        iconSize: [20, 20], iconAnchor: [10, 10]
-                    });
-                    state.markers.self = L.marker([latitude, longitude], { icon }).addTo(state.runnerMap);
-                }
-
-                if (state.positions.length > 1) {
-                    if (state.runnerTrail) state.runnerMap.removeLayer(state.runnerTrail);
-                    state.runnerTrail = L.polyline(state.positions, {
-                        color: '#00d4ff', weight: 3, opacity: 0.7
-                    }).addTo(state.runnerMap);
+                if (S.trail.length > 1) {
+                    if (S.lines.trail) S.maps.runner.removeLayer(S.lines.trail);
+                    S.lines.trail = L.polyline(S.trail, { color: '#00d4ff', weight: 3, opacity: .7 }).addTo(S.maps.runner);
                 }
             }
 
-            sendPosition(latitude, longitude, speed);
+            // Enviar posição (debounced pelo safeUpdate)
+            safeUpdate((data, room) => {
+                const r = room.runners?.[S.rid];
+                if (!r) return;
+                r.lat = lat; r.lng = lng; r.speed = speed;
+                r.distance = S.dist; r.lastUpdate = Date.now(); r.active = true;
+            });
         },
-        (error) => {
-            console.error('GPS Error:', error);
-            showToast('Erro GPS: ' + error.message, 'error');
-        },
-        { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+        e => toast('GPS: ' + e.message, 'err'),
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
     );
 }
 
-async function sendPosition(lat, lng, speed) {
-    const data = await readBin();
-    if (!data || !data.rooms || !data.rooms[state.roomCode]) return;
+function updateRunner() {
+    const room = S.data;
+    const st = $('race-st');
 
-    const runner = data.rooms[state.roomCode].runners[state.runnerId];
-    if (!runner) return;
+    if (room.status === 'running') {
+        st.className = 'race-st go';
+        st.innerHTML = '<i class="fas fa-flag-checkered"></i> CORRIDA EM ANDAMENTO!';
+        $('s-time').textContent = fmtShort(Date.now() - room.startTime - (room.pausedTime || 0));
+    } else if (room.status === 'waiting') {
+        st.className = 'race-st';
+        st.innerHTML = '<i class="fas fa-hourglass-half"></i> Aguardando largada...';
+    } else if (room.status === 'paused') {
+        st.className = 'race-st';
+        st.innerHTML = '<i class="fas fa-pause-circle"></i> Pausada';
+    } else if (room.status === 'finished') {
+        st.className = 'race-st done';
+        st.innerHTML = '<i class="fas fa-trophy"></i> Finalizada!';
+        clearInterval(S.pollId);
+        if (S.gpsId) navigator.geolocation.clearWatch(S.gpsId);
+        setTimeout(showResults, 1500);
+        return;
+    }
 
-    runner.lat = lat;
-    runner.lng = lng;
-    runner.speed = speed;
-    runner.distance = state.totalDistance;
-    runner.lastUpdate = Date.now();
-    runner.active = true;
+    // Posição
+    const sorted = Object.entries(room.runners || {}).sort((a, b) => (b[1].distance||0) - (a[1].distance||0));
+    const idx = sorted.findIndex(([id]) => id === S.rid);
+    $('s-pos').textContent = idx >= 0 ? `${idx+1}º` : '-';
 
-    await updateBin(data);
-}
+    // Áudio
+    if (room.audioId && room.audioId !== S.lastAud && room.audioData) {
+        S.lastAud = room.audioId;
+        const a = $('audio-out');
+        a.src = room.audioData;
+        a.play().catch(() => {});
+    }
 
-// ============ ATUALIZAÇÕES DO CORREDOR (COM ÁUDIO E MENSAGENS) ============
-function startRunnerUpdates() {
-    state.updateTimer = setInterval(async () => {
-        const data = await readBin();
-        if (!data || !data.rooms || !data.rooms[state.roomCode]) return;
+    // Transmitting indicator
+    const ab = $('audio-bar');
+    if (room.transmitting) ab.classList.remove('hidden');
+    else ab.classList.add('hidden');
 
-        const room = data.rooms[state.roomCode];
-        state.raceData = room;
-
-        // Status da corrida
-        const statusEl = document.getElementById('runner-race-status');
-        if (room.status === 'running') {
-            statusEl.className = 'runner-status active';
-            statusEl.innerHTML = '<div class="status-icon"><i class="fas fa-flag-checkered"></i></div><span>CORRIDA EM ANDAMENTO!</span>';
-            const elapsed = Date.now() - room.startTime - (room.pausedTime || 0);
-            document.getElementById('stat-time').textContent = formatTimeShort(elapsed);
-        } else if (room.status === 'waiting') {
-            statusEl.className = 'runner-status';
-            statusEl.innerHTML = '<div class="status-icon"><i class="fas fa-hourglass-half"></i></div><span>Aguardando largada...</span>';
-        } else if (room.status === 'paused') {
-            statusEl.className = 'runner-status';
-            statusEl.innerHTML = '<div class="status-icon"><i class="fas fa-pause-circle"></i></div><span>Corrida pausada</span>';
-        } else if (room.status === 'finished') {
-            statusEl.className = 'runner-status finished-status';
-            statusEl.innerHTML = '<div class="status-icon"><i class="fas fa-trophy"></i></div><span>Corrida finalizada!</span>';
-            clearInterval(state.updateTimer);
-            if (state.watchId) navigator.geolocation.clearWatch(state.watchId);
-            setTimeout(() => showResults(), 2000);
+    // Messages
+    if (room.messages?.length) {
+        const last = room.messages[room.messages.length - 1];
+        if (last.id !== S.lastMsg) {
+            S.lastMsg = last.id;
+            showBanner(last.text);
         }
-
-        // Posição no ranking
-        const runners = room.runners || {};
-        const sorted = Object.entries(runners).sort((a, b) => (b[1].distance || 0) - (a[1].distance || 0));
-        const myIndex = sorted.findIndex(([id]) => id === state.runnerId);
-        document.getElementById('stat-position').textContent = myIndex >= 0 ? `${myIndex + 1}º` : '-';
-
-        // ===== RECEBER ÁUDIO DO ADMIN =====
-        if (room.audioId && room.audioId !== state.lastAudioId && room.audioData) {
-            state.lastAudioId = room.audioId;
-            playAdminAudio(room.audioData);
-        }
-
-        // Indicador de transmissão
-        const audioIndicator = document.getElementById('audio-indicator');
-        if (room.isTransmitting) {
-            audioIndicator.classList.remove('hidden');
-        } else {
-            audioIndicator.classList.add('hidden');
-        }
-
-        // ===== RECEBER MENSAGENS DO ADMIN =====
-        if (room.messages && room.messages.length > 0) {
-            const lastMsg = room.messages[room.messages.length - 1];
-            if (lastMsg.id !== state.lastMessageId) {
-                state.lastMessageId = lastMsg.id;
-                showAdminMessage(lastMsg.text);
-            }
-        }
-
-    }, CONFIG.UPDATE_INTERVAL);
-}
-
-// Tocar áudio do admin no dispositivo do corredor
-function playAdminAudio(base64Audio) {
-    try {
-        const audioPlayer = document.getElementById('audio-player');
-        audioPlayer.src = base64Audio;
-        audioPlayer.volume = 1.0;
-        audioPlayer.play().catch(err => {
-            console.log('Autoplay bloqueado, tentando com interação...');
-        });
-    } catch (err) {
-        console.error('Erro ao tocar áudio:', err);
     }
 }
 
-// Mostrar mensagem do admin no banner do corredor
-function showAdminMessage(text) {
-    const banner = document.getElementById('admin-message-banner');
-    const msgText = document.getElementById('admin-msg-text');
-
-    msgText.textContent = text;
-    banner.classList.remove('hidden');
-
-    // Vibrar dispositivo se suportado
-    if (navigator.vibrate) {
-        navigator.vibrate([200, 100, 200]);
-    }
-
-    // Tocar som de notificação
-    playNotificationSound();
-
-    // Auto-fechar após 8 segundos
-    setTimeout(() => {
-        banner.classList.add('hidden');
-    }, 8000);
+function showBanner(text) {
+    $('msg-text').textContent = text;
+    $('msg-banner').classList.remove('hidden');
+    if (navigator.vibrate) navigator.vibrate([150, 80, 150]);
+    beep();
+    setTimeout(() => $('msg-banner').classList.add('hidden'), 7000);
 }
 
-function closeAdminMessage() {
-    document.getElementById('admin-message-banner').classList.add('hidden');
-}
+function closeBanner() { $('msg-banner').classList.add('hidden'); }
 
-function playNotificationSound() {
-    try {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-
-        osc.frequency.setValueAtTime(880, ctx.currentTime);
-        osc.frequency.setValueAtTime(1100, ctx.currentTime + 0.1);
-        osc.frequency.setValueAtTime(880, ctx.currentTime + 0.2);
-
-        gain.gain.setValueAtTime(0.3, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
-
-        osc.start(ctx.currentTime);
-        osc.stop(ctx.currentTime + 0.4);
-    } catch (e) {
-        // Silenciar erros de áudio
-    }
-}
-
-// ============ RESULTADOS ============
+// ======= RESULTS =======
 function showResults() {
     document.querySelectorAll('.screen').forEach(s => s.classList.add('hidden'));
-    document.getElementById('result-screen').classList.remove('hidden');
+    show('result-screen');
 
-    const runners = state.raceData.runners || {};
-    const sorted = Object.entries(runners).sort((a, b) => (b[1].distance || 0) - (a[1].distance || 0));
+    const runners = S.data.runners || {};
+    const sorted = Object.entries(runners).sort((a, b) => (b[1].distance||0) - (a[1].distance||0));
 
-    const podium = document.getElementById('podium');
-    const podiumData = [
-        { place: 2, class: 'silver', emoji: '🥈' },
-        { place: 1, class: 'gold', emoji: '🥇' },
-        { place: 3, class: 'bronze', emoji: '🥉' }
-    ];
+    // Podium
+    const podOrder = [1, 0, 2]; // silver, gold, bronze display order
+    const podCls = ['silver', 'gold', 'bronze'];
+    const podEmoji = ['🥈', '🥇', '🥉'];
 
-    let podiumHtml = '';
-    podiumData.forEach(p => {
-        const runner = sorted[p.place - 1];
-        if (runner) {
-            const [, r] = runner;
-            podiumHtml += `
-                <div class="podium-place">
-                    <div class="podium-name">${r.name}</div>
-                    <div class="podium-block ${p.class}">${p.emoji}</div>
-                    <div class="podium-time">${(r.distance || 0).toFixed(2)} km</div>
-                </div>`;
-        }
-    });
-    podium.innerHTML = podiumHtml;
+    $('podium').innerHTML = podOrder.map(i => {
+        const r = sorted[i];
+        if (!r) return '';
+        return `<div class="pod"><div class="pod-name">${r[1].name}</div><div class="pod-bar ${podCls[i]}">${podEmoji[i]}</div><div class="pod-km">${(r[1].distance||0).toFixed(2)} km</div></div>`;
+    }).join('');
 
-    const fullResults = document.getElementById('full-results');
-    let resultsHtml = '';
-    sorted.forEach(([id, runner], index) => {
-        const topClass = index === 0 ? 'top-1' : index === 1 ? 'top-2' : index === 2 ? 'top-3' : '';
-        resultsHtml += `
-            <div class="rank-item ${topClass}">
-                <div class="rank-position">${index + 1}</div>
-                <div class="rank-info">
-                    <div class="rank-name">${runner.name}</div>
-                    <div class="rank-stats">
-                        <span>📏 ${(runner.distance || 0).toFixed(2)} km</span>
-                        <span>🏃 ${(runner.speed || 0).toFixed(1)} km/h</span>
-                    </div>
-                </div>
-            </div>`;
-    });
-    fullResults.innerHTML = resultsHtml;
+    // Full list
+    $('results-list').innerHTML = sorted.map(([, r], i) => {
+        const cls = i === 0 ? 'g' : i === 1 ? 's' : i === 2 ? 'b' : '';
+        return `<div class="rank ${cls}"><div class="rank-pos">${i+1}</div><div class="rank-info"><div class="rank-name">${r.name}</div><div class="rank-meta"><span>📏${(r.distance||0).toFixed(2)}km</span><span>🏃${(r.speed||0).toFixed(1)}km/h</span></div></div></div>`;
+    }).join('');
 }
 
-// ============ UTILITÁRIOS ============
-function haversine(lat1, lon1, lat2, lon2) {
-    const R = 6371;
-    const dLat = toRad(lat2 - lat1);
-    const dLon = toRad(lon2 - lon1);
-    const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
+// ======= HOME =======
+function goHome() {
+    clearInterval(S.pollId); clearInterval(S.tickId);
+    if (S.gpsId) navigator.geolocation.clearWatch(S.gpsId);
+    stopVoice();
 
-function toRad(deg) { return deg * Math.PI / 180; }
-
-function backToMenu() {
-    clearInterval(state.updateTimer);
-    clearInterval(state.timerInterval);
-    if (state.watchId) navigator.geolocation.clearWatch(state.watchId);
-    stopAllRecording();
-    if (state.audioStream) {
-        state.audioStream.getTracks().forEach(t => t.stop());
-    }
-
-    Object.keys(state.markers).forEach(k => delete state.markers[k]);
-    state.adminMap = null;
-    state.runnerMap = null;
-    state.routeMap = null;
-    state.routePoints = [];
-    state.totalDistance = 0;
-    state.positions = [];
-    state.lastPosition = null;
-    state.pausedTime = 0;
-    state.micActive = false;
-    state.lastMessageId = null;
-    state.lastAudioId = null;
+    Object.keys(S.markers).forEach(k => delete S.markers[k]);
+    S.maps = {}; S.lines = {}; S.routePts = [];
+    S.dist = 0; S.trail = []; S.lastPos = null; S.paused = 0; S.t0 = null;
+    S.mic = false; S.lastMsg = null; S.lastAud = null; S.busy = false;
 
     document.querySelectorAll('.screen').forEach(s => s.classList.add('hidden'));
-    document.getElementById('main-menu').classList.remove('hidden');
+    show('main-menu');
 
-    document.getElementById('start-btn').classList.remove('hidden');
-    document.getElementById('pause-btn').classList.add('hidden');
-    document.getElementById('resume-btn').classList.add('hidden');
-    document.getElementById('finish-btn').classList.add('hidden');
-    document.getElementById('race-timer').textContent = '00:00:00';
+    show('btn-start'); hide('btn-pause'); hide('btn-resume'); hide('btn-finish');
+    $('race-timer').textContent = '00:00:00';
+    $('status-badge').textContent = '⏳ AGUARDANDO';
+    $('status-badge').className = 'status-badge';
+
+    const mb = $('mic-btn');
+    if (mb) mb.classList.remove('on');
+
+    checkConn();
 }
