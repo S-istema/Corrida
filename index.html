@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RaceTracker Pro 🏃‍♂️</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+</head>
+<body>
+
+    <!-- TELA DE LOADING -->
+    <div id="loading-screen">
+        <div class="loader-container">
+            <div class="runner-icon">🏃‍♂️</div>
+            <div class="loader-bar"><div class="loader-fill"></div></div>
+            <p>Carregando RaceTracker Pro...</p>
+        </div>
+    </div>
+
+    <!-- TELA PRINCIPAL - MENU -->
+    <div id="main-menu" class="screen hidden">
+        <div class="particles" id="particles"></div>
+        <nav class="navbar">
+            <div class="logo">
+                <i class="fas fa-running"></i>
+                <span>RaceTracker<span class="pro">PRO</span></span>
+            </div>
+            <div class="nav-status" id="nav-status">
+                <span class="status-dot offline"></span>
+                <span>Offline</span>
+            </div>
+        </nav>
+
+        <div class="hero">
+            <h1 class="glitch" data-text="RACETRACKER">RACETRACKER</h1>
+            <p class="subtitle">Sistema profissional de rastreamento de corridas em tempo real</p>
+
+            <div class="menu-cards">
+                <div class="card create-card" onclick="showCreateRoom()">
+                    <div class="card-icon"><i class="fas fa-plus-circle"></i></div>
+                    <h3>Criar Sala</h3>
+                    <p>Crie uma corrida e controle tudo</p>
+                    <div class="card-glow"></div>
+                </div>
+                <div class="card join-card" onclick="showJoinRoom()">
+                    <div class="card-icon"><i class="fas fa-sign-in-alt"></i></div>
+                    <h3>Entrar na Sala</h3>
+                    <p>Entre como corredor com GPS</p>
+                    <div class="card-glow"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL CRIAR SALA -->
+    <div id="create-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2><i class="fas fa-flag-checkered"></i> Criar Nova Corrida</h2>
+                <button class="close-btn" onclick="closeModals()"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label><i class="fas fa-trophy"></i> Nome da Corrida</label>
+                    <input type="text" id="race-name" placeholder="Ex: Maratona Urbana 2024">
+                </div>
+                <div class="form-group">
+                    <label><i class="fas fa-road"></i> Distância (km)</label>
+                    <input type="number" id="race-distance" placeholder="Ex: 5" min="0.1" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label><i class="fas fa-route"></i> Tipo de Trajeto</label>
+                    <select id="race-type">
+                        <option value="linear">Linear (Ponto A → B)</option>
+                        <option value="circular">Circular (Volta completa)</option>
+                        <option value="free">Livre (Sem trajeto fixo)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label><i class="fas fa-users"></i> Máx. Corredores</label>
+                    <input type="number" id="max-runners" value="20" min="2" max="100">
+                </div>
+                <div class="form-group">
+                    <label><i class="fas fa-map-marker-alt"></i> Definir Trajeto no Mapa</label>
+                    <div id="route-map" class="mini-map"></div>
+                    <small>Clique no mapa para definir pontos do trajeto</small>
+                    <button class="btn btn-secondary" onclick="clearRoute()">
+                        <i class="fas fa-undo"></i> Limpar Trajeto
+                    </button>
+                </div>
+                <button class="btn btn-primary btn-lg" onclick="createRoom()">
+                    <i class="fas fa-rocket"></i> Criar Sala
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL ENTRAR SALA -->
+    <div id="join-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2><i class="fas fa-sign-in-alt"></i> Entrar na Corrida</h2>
+                <button class="close-btn" onclick="closeModals()"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label><i class="fas fa-key"></i> Código da Sala</label>
+                    <input type="text" id="room-code" placeholder="Ex: RACE-A1B2C3" maxlength="12" style="text-transform: uppercase;">
+                </div>
+                <div class="form-group">
+                    <label><i class="fas fa-user"></i> Seu Nome</label>
+                    <input type="text" id="runner-name" placeholder="Ex: João Silva">
+                </div>
+                <button class="btn btn-primary btn-lg" onclick="joinRoom()">
+                    <i class="fas fa-running"></i> Entrar como Corredor
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- TELA DO ADMIN (Criador da Sala) -->
+    <div id="admin-screen" class="screen hidden">
+        <nav class="navbar">
+            <div class="logo">
+                <i class="fas fa-running"></i>
+                <span>RaceTracker<span class="pro">PRO</span></span>
+            </div>
+            <div class="room-info">
+                <span class="room-code-display" id="admin-room-code">RACE-XXXX</span>
+                <button class="btn btn-small" onclick="copyRoomCode()">
+                    <i class="fas fa-copy"></i>
+                </button>
+            </div>
+            <button class="btn btn-danger btn-small" onclick="endRace()">
+                <i class="fas fa-power-off"></i> Encerrar
+            </button>
+        </nav>
+
+        <div class="admin-layout">
+            <!-- Mapa Principal -->
+            <div class="map-container">
+                <div id="admin-map" class="full-map"></div>
+                <div class="map-overlay">
+                    <div class="race-timer" id="race-timer">00:00:00</div>
+                    <div class="race-status-badge" id="race-status-badge">
+                        <span class="pulse-dot"></span> AGUARDANDO
+                    </div>
+                </div>
+            </div>
+
+            <!-- Painel Lateral -->
+            <div class="side-panel">
+                <div class="panel-section">
+                    <h3><i class="fas fa-info-circle"></i> Info da Corrida</h3>
+                    <div class="info-grid">
+                        <div class="info-item">
+                            <span class="info-label">Nome</span>
+                            <span class="info-value" id="info-name">-</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Distância</span>
+                            <span class="info-value" id="info-distance">-</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Tipo</span>
+                            <span class="info-value" id="info-type">-</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Corredores</span>
+                            <span class="info-value" id="info-runners">0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- NOVO: SISTEMA DE COMUNICAÇÃO POR VOZ -->
+                <div class="panel-section">
+                    <h3><i class="fas fa-broadcast-tower"></i> Comunicação</h3>
+                    <div class="voice-system">
+                        <div class="voice-status" id="voice-status">
+                            <i class="fas fa-microphone-slash"></i>
+                            <span>Microfone desligado</span>
+                        </div>
+                        <div class="voice-visualizer" id="voice-visualizer">
+                            <div class="voice-bar"></div>
+                            <div class="voice-bar"></div>
+                            <div class="voice-bar"></div>
+                            <div class="voice-bar"></div>
+                            <div class="voice-bar"></div>
+                            <div class="voice-bar"></div>
+                            <div class="voice-bar"></div>
+                            <div class="voice-bar"></div>
+                            <div class="voice-bar"></div>
+                            <div class="voice-bar"></div>
+                            <div class="voice-bar"></div>
+                            <div class="voice-bar"></div>
+                        </div>
+                        <div class="voice-controls">
+                            <button class="btn-mic" id="mic-toggle" onclick="toggleMicrophone()">
+                                <i class="fas fa-microphone"></i>
+                            </button>
+                            <button class="btn-ptt" id="ptt-btn" onmousedown="startPTT()" onmouseup="stopPTT()" ontouchstart="startPTT()" ontouchend="stopPTT()">
+                                <i class="fas fa-walkie-talkie"></i>
+                                <span>Pressione para falar</span>
+                            </button>
+                        </div>
+                        <div class="voice-mode-toggle">
+                            <label class="toggle-label">
+                                <input type="checkbox" id="voice-mode" onchange="toggleVoiceMode()">
+                                <span class="toggle-switch"></span>
+                                <span class="toggle-text">Modo contínuo</span>
+                            </label>
+                        </div>
+                        <!-- Mensagens de texto rápidas -->
+                        <div class="quick-messages">
+                            <h4><i class="fas fa-bolt"></i> Mensagens Rápidas</h4>
+                            <div class="quick-msg-grid">
+                                <button class="quick-msg-btn" onclick="sendQuickMessage('🏁 Preparem-se para a largada!')">
+                                    🏁 Largada
+                                </button>
+                                <button class="quick-msg-btn" onclick="sendQuickMessage('💧 Ponto de hidratação próximo!')">
+                                    💧 Hidratação
+                                </button>
+                                <button class="quick-msg-btn" onclick="sendQuickMessage('⚠️ Cuidado com o terreno à frente!')">
+                                    ⚠️ Cuidado
+                                </button>
+                                <button class="quick-msg-btn" onclick="sendQuickMessage('💪 Vocês estão indo muito bem!')">
+                                    💪 Motivação
+                                </button>
+                                <button class="quick-msg-btn" onclick="sendQuickMessage('🔄 Mudança de rota! Atenção!')">
+                                    🔄 Rota
+                                </button>
+                                <button class="quick-msg-btn" onclick="sendQuickMessage('🏥 Suporte médico disponível')">
+                                    🏥 Médico
+                                </button>
+                                <button class="quick-msg-btn" onclick="sendQuickMessage('📢 Última volta! Finalizem!')">
+                                    📢 Última volta
+                                </button>
+                                <button class="quick-msg-btn" onclick="sendQuickMessage('⛔ CORRIDA SUSPENSA!')">
+                                    ⛔ Suspender
+                                </button>
+                            </div>
+                            <div class="custom-message">
+                                <input type="text" id="custom-msg-input" placeholder="Digite uma mensagem personalizada...">
+                                <button class="btn btn-primary btn-small" onclick="sendCustomMessage()">
+                                    <i class="fas fa-paper-plane"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <h3><i class="fas fa-gamepad"></i> Controles</h3>
+                    <div class="control-buttons">
+                        <button class="btn btn-success btn-block" id="start-btn" onclick="startRace()">
+                            <i class="fas fa-flag"></i> DAR LARGADA
+                        </button>
+                        <button class="btn btn-warning btn-block hidden" id="pause-btn" onclick="pauseRace()">
+                            <i class="fas fa-pause"></i> PAUSAR
+                        </button>
+                        <button class="btn btn-primary btn-block hidden" id="resume-btn" onclick="resumeRace()">
+                            <i class="fas fa-play"></i> RETOMAR
+                        </button>
+                        <button class="btn btn-danger btn-block hidden" id="finish-btn" onclick="finishRace()">
+                            <i class="fas fa-flag-checkered"></i> FINALIZAR
+                        </button>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <h3><i class="fas fa-list-ol"></i> Ranking ao Vivo</h3>
+                    <div class="ranking-list" id="ranking-list">
+                        <div class="empty-state">
+                            <i class="fas fa-users"></i>
+                            <p>Aguardando corredores...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- TELA DO CORREDOR -->
+    <div id="runner-screen" class="screen hidden">
+        <nav class="navbar">
+            <div class="logo">
+                <i class="fas fa-running"></i>
+                <span>RaceTracker<span class="pro">PRO</span></span>
+            </div>
+            <div class="runner-info-nav">
+                <span id="runner-display-name">Corredor</span>
+            </div>
+        </nav>
+
+        <div class="runner-layout">
+            <div id="runner-map" class="runner-map"></div>
+
+            <!-- Notificação de mensagem do admin -->
+            <div class="admin-message-banner hidden" id="admin-message-banner">
+                <div class="msg-icon"><i class="fas fa-bullhorn"></i></div>
+                <div class="msg-content">
+                    <span class="msg-from">Organizador:</span>
+                    <span class="msg-text" id="admin-msg-text"></span>
+                </div>
+                <button class="msg-close" onclick="closeAdminMessage()"><i class="fas fa-times"></i></button>
+            </div>
+
+            <!-- Indicador de áudio do admin -->
+            <div class="audio-indicator hidden" id="audio-indicator">
+                <div class="audio-pulse"></div>
+                <i class="fas fa-volume-up"></i>
+                <span>Organizador falando...</span>
+            </div>
+
+            <div class="runner-dashboard">
+                <div class="runner-stats">
+                    <div class="stat-card">
+                        <div class="stat-icon"><i class="fas fa-tachometer-alt"></i></div>
+                        <div class="stat-value" id="stat-speed">0.0</div>
+                        <div class="stat-label">km/h</div>
+                    </div>
+                    <div class="stat-card highlight">
+                        <div class="stat-icon"><i class="fas fa-road"></i></div>
+                        <div class="stat-value" id="stat-distance">0.00</div>
+                        <div class="stat-label">km percorridos</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon"><i class="fas fa-stopwatch"></i></div>
+                        <div class="stat-value" id="stat-time">00:00</div>
+                        <div class="stat-label">tempo</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon"><i class="fas fa-medal"></i></div>
+                        <div class="stat-value" id="stat-position">-</div>
+                        <div class="stat-label">posição</div>
+                    </div>
+                </div>
+
+                <div class="runner-status" id="runner-race-status">
+                    <div class="status-icon"><i class="fas fa-hourglass-half"></i></div>
+                    <span>Aguardando largada...</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- TELA DE RESULTADO -->
+    <div id="result-screen" class="screen hidden">
+        <div class="result-container">
+            <div class="trophy-animation">🏆</div>
+            <h1>Corrida Finalizada!</h1>
+            <div class="podium" id="podium"></div>
+            <div class="full-results" id="full-results"></div>
+            <button class="btn btn-primary btn-lg" onclick="backToMenu()">
+                <i class="fas fa-home"></i> Voltar ao Menu
+            </button>
+        </div>
+    </div>
+
+    <!-- TOAST NOTIFICATIONS -->
+    <div id="toast-container"></div>
+
+    <!-- ÁUDIO PLAYER OCULTO -->
+    <audio id="audio-player" autoplay></audio>
+    <audio id="notification-sound" preload="auto">
+        <source src="data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgip2teleR" type="audio/wav">
+    </audio>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
